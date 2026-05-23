@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 
-ControlMode = Literal["init", "zero", "policy"]
+ControlMode = Literal["init", "zero", "policy", "align"]
 
 
 @dataclass(frozen=True)
@@ -18,6 +18,7 @@ def resolve_keyboard_control_mode(keycode: str) -> ControlMode | None:
         "i": "init",
         "o": "zero",
         "]": "policy",
+        "[": "align",
     }.get(keycode)
 
 

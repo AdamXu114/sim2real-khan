@@ -81,6 +81,8 @@ class BasePolicy:
             raise ValueError(f"Invalid action scale type: {type(action_scale_cfg)}")
 
         self.init_count = 0
+        self.align_count = 0
+        self.align_target_joint_pos = self.default_dof_angles.copy()
         # Perf metrics dict is reused; initialize early so background threads can record.
         self.perf_dict: Dict[str, float] = {}
         self.key_pressed: set[str] = set()
@@ -222,13 +224,24 @@ class BasePolicy:
             obs_dict[obs_group.name] = obs.astype(np.float32)
         return obs_dict
 
+    def get_align_target(self):
+        if self.align_count > 100:
+            self.align_count = 100
+
+        # interpolate from current dof_pos to align target angles
+        dof_pos = self.state_processor.joint_pos
+        progress = self.align_count / 100
+        q_target = dof_pos + (self.align_target_joint_pos - dof_pos) * progress
+        self.align_count += 1
+        return q_target
+
     def get_init_target(self):
-        if self.init_count > 500:
-            self.init_count = 500
+        if self.init_count > 100:
+            self.init_count = 100
 
         # interpolate from current dof_pos to default angles
         dof_pos = self.state_processor.joint_pos
-        progress = self.init_count / 500
+        progress = self.init_count / 100
         q_target = dof_pos + (self.default_dof_angles - dof_pos) * progress
         self.init_count += 1
         return q_target
@@ -237,6 +250,24 @@ class BasePolicy:
         self.init_count = 0
         self.state_dict["control_mode"] = "init"
         logger.info(f"Control mode set to init via {source}")
+
+    def set_align_mode(self, *, source: str) -> None:
+        self.align_count = 0
+        self.state_processor.reset()
+        if self.state_processor.motion_data is not None:
+            try:
+                idx_zero = list(self.state_processor.motion_future_steps).index(0)
+                motion_joint_pos = self.state_processor.motion_data.joint_pos[0, idx_zero]
+                num_joints = len(self.state_processor.joint_names)
+                self.align_target_joint_pos = motion_joint_pos[:num_joints].copy()
+            except Exception as exc:
+                logger.warning(f"Failed to get reference motion first frame joints: {exc}. Falling back to default pose.")
+                self.align_target_joint_pos = self.default_dof_angles.copy()
+        else:
+            self.align_target_joint_pos = self.default_dof_angles.copy()
+
+        self.state_dict["control_mode"] = "align"
+        logger.info(f"Control mode set to align via {source}")
 
     def set_zero_mode(self, *, source: str) -> None:
         self.state_dict["control_mode"] = "zero"
@@ -258,6 +289,8 @@ class BasePolicy:
             self.set_zero_mode(source=self.controller.name)
         elif mode == "init":
             self.set_init_mode(source=self.controller.name)
+        elif mode == "align":
+            self.set_align_mode(source=self.controller.name)
 
     def run(self):
         total_inference_cnt = 0
@@ -346,6 +379,8 @@ class BasePolicy:
                         control_mode = self.state_dict["control_mode"]
                         if control_mode == "init":
                             q_target = self.get_init_target()
+                        elif control_mode == "align":
+                            q_target = self.get_align_target()
                         elif control_mode == "zero":
                             q_target = self.state_processor.joint_pos
                         elif control_mode == "policy":
