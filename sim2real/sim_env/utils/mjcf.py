@@ -43,12 +43,18 @@ def _inject_floor_scene_xml(xml_text: str) -> str:
     asset_close = xml_text.find("</asset>")
     if asset_close < 0:
         raise ValueError("Expected </asset> block in MJCF")
-    xml_text = xml_text[:asset_close] + VIEWER_ASSET_XML + xml_text[asset_close:]
+
+    if 'name="groundplane"' not in xml_text:
+        xml_text = xml_text[:asset_close] + VIEWER_ASSET_XML + xml_text[asset_close:]
 
     worldbody_close = xml_text.find("</worldbody>")
     if worldbody_close < 0:
         raise ValueError("Expected </worldbody> block in MJCF")
-    return xml_text[:worldbody_close] + VIEWER_WORLDBODY_XML + xml_text[worldbody_close:]
+
+    if 'name="floor"' not in xml_text:
+        xml_text = xml_text[:worldbody_close] + VIEWER_WORLDBODY_XML + xml_text[worldbody_close:]
+
+    return xml_text
 
 
 @contextmanager

@@ -195,13 +195,111 @@ class ref_motion_phase(_motion_obs):
     def compute(self) -> np.ndarray:
         t = self.state_processor.motion_t
         ref_motion_phase = (t % self.motion_steps) / self.motion_steps
-        return ref_motion_phase.reshape(-1)
-        
+        out = ref_motion_phase.reshape(-1)
+        # print(f"[obs] ref_motion_phase shape={out.shape}")
+        return out
 
+
+class command_ref_motion(_motion_obs):
+    """Legacy deploy command block with optional history stacking.
+
+    Per-frame feature layout matches deploy/deploy_mujoco_history_jakamini.py:
+      - ref_root_lin_vel_base[:2]
+      - ref_anchor_pos[2:3]
+      - rpy[:2]
+      - ref_root_ang_vel_base[2:3]
+      - joint_pos_future
+    Total per frame: 33.
+    """
+
+    def __init__(
+        self,
+        history_steps: Optional[Union[Sequence[int], int]] = None,
+        lin_vel_scale: float = 1.0,
+        height_scale: float = 1.0,
+        rpy_scale: float = 1.0,
+        ang_vel_scale: float = 1.0,
+        joint_pos_scale: float = 1.0,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        if history_steps is None:
+            history_steps = [0]
+        elif isinstance(history_steps, (int, np.integer)):
+            history_steps = [int(history_steps)]
+        else:
+            history_steps = [int(step) for step in history_steps]
+
+        self.history_steps = np.asarray(history_steps, dtype=int)
+        if self.history_steps.ndim != 1:
+            raise ValueError(f"history_steps must be 1D, got shape={self.history_steps.shape}")
+        if self.history_steps.size == 0:
+            raise ValueError("history_steps must not be empty")
+
+        self.lin_vel_scale = float(lin_vel_scale)
+        self.height_scale = float(height_scale)
+        self.rpy_scale = float(rpy_scale)
+        self.ang_vel_scale = float(ang_vel_scale)
+        self.joint_pos_scale = float(joint_pos_scale)
+
+        self._history_buffer = np.zeros((int(self.history_steps.max()) + 1, 33), dtype=np.float32)
+
+    @staticmethod
+    def _quat_to_rpy_xy(quat_wxyz: np.ndarray) -> np.ndarray:
+        qw, qx, qy, qz = quat_wxyz[:, 0], quat_wxyz[:, 1], quat_wxyz[:, 2], quat_wxyz[:, 3]
+        sinr_cosp = 2.0 * (qw * qx + qy * qz)
+        cosr_cosp = 1.0 - 2.0 * (qx * qx + qy * qy)
+        roll = np.arctan2(sinr_cosp, cosr_cosp)
+
+        sinp = 2.0 * (qw * qy - qz * qx)
+        pitch = np.where(
+            np.abs(sinp) >= 1.0,
+            np.copysign(np.pi / 2.0, sinp),
+            np.arcsin(sinp),
+        )
+        return np.stack([roll, pitch], axis=-1)
+
+    def reset(self):
+        self._history_buffer[:] = 0.0
+        self.update({})
+
+    def update(self, data: Dict[str, Any]) -> None:
+        super().update(data)
+        motion_data: MotionData = self.state_processor.motion_data
+        step = self.obs_current_step_index
+
+        ref_anchor_quat_curr = motion_data.body_quat_w[:, step, self._anchor_body_idx, :]
+        ref_anchor_lin_vel_w = motion_data.body_lin_vel_w[:, step, self._anchor_body_idx, :]
+        ref_anchor_ang_vel_w = motion_data.body_ang_vel_w[:, step, self._anchor_body_idx, :]
+        ref_root_lin_vel_base = quat_rotate_inverse_numpy(ref_anchor_quat_curr, ref_anchor_lin_vel_w)
+        ref_root_ang_vel_base = quat_rotate_inverse_numpy(ref_anchor_quat_curr, ref_anchor_ang_vel_w)
+
+        ref_anchor_pos = self.ref_anchor_pos_w
+        rpy_xy = self._quat_to_rpy_xy(ref_anchor_quat_curr)
+        joint_pos_future = self._select(self.ref_joint_pos_future)[:, 0, :]
+
+        cmd = np.concatenate([
+            ref_root_lin_vel_base[:, :2] * self.lin_vel_scale,
+            ref_anchor_pos[:, 2:3] * self.height_scale,
+            rpy_xy * self.rpy_scale,
+            ref_root_ang_vel_base[:, 2:3] * self.ang_vel_scale,
+            joint_pos_future * self.joint_pos_scale,
+        ], axis=-1).astype(np.float32)
+        # print(f"[obs] command_ref_motion shape={cmd.shape}")
+
+        self._history_buffer = np.roll(self._history_buffer, 1, axis=0)
+        self._history_buffer[0] = cmd[0]
+
+    def compute(self) -> np.ndarray:
+        out = self._history_buffer[self.history_steps].reshape(-1)
+        # print(f"[obs] command_ref_motion shape={out.shape}")
+        return out
 
 class ref_joint_pos_future(_motion_joint_obs):
     def compute(self) -> np.ndarray:
-        return self._select(self.ref_joint_pos_future).reshape(-1)
+        out = self._select(self.ref_joint_pos_future).reshape(-1)
+        # print(f"[obs] ref_joint_pos_future shape={out.shape}")
+        return out
 
 # class ref_joint_vel_future(_motion_obs):
 #     def compute(self) -> np.ndarray:
@@ -287,7 +385,67 @@ class ref_root_ori_future_b(_motion_obs):
             quat_conjugate(robot_root_quat_w),
             ref_root_quat_future_w
         )
-        self.ref_root_ori_future_b = matrix_from_quat(ref_root_quat_future_b)
-    
+        ref_root_ori_future_b = matrix_from_quat(ref_root_quat_future_b)[:, :, :2, :3].reshape(-1)
+        self._history_buffer = np.roll(self._history_buffer, 1, axis=0)
+        self._history_buffer[0] = ref_root_ori_future_b[:6]
+
     def compute(self):
-        return self.ref_root_ori_future_b[:, :, :2, :3].reshape(-1)
+        out = self._history_buffer[self.history_steps].reshape(-1)
+        # print(f"[obs] ref_root_ori_future_b shape={out.shape}")
+        return out
+
+
+class ref_anchor_ori_future_b(_motion_obs):
+    def __init__(self, history_steps: Optional[Union[Sequence[int], int]] = None, **kwargs):
+        super().__init__(**kwargs)
+        if history_steps is None:
+            history_steps = [0]
+        elif isinstance(history_steps, (int, np.integer)):
+            history_steps = [int(history_steps)]
+        else:
+            history_steps = [int(step) for step in history_steps]
+
+        self.history_steps = np.asarray(history_steps, dtype=int)
+        if self.history_steps.ndim != 1:
+            raise ValueError(f"history_steps must be 1D, got shape={self.history_steps.shape}")
+        if self.history_steps.size == 0:
+            raise ValueError("history_steps must not be empty")
+
+        self._history_buffer = np.zeros((int(self.history_steps.max()) + 1, 6), dtype=np.float32)
+        self.anchor_quat_offset = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+
+    @staticmethod
+    def _quat_to_rot6d(quat_wxyz: np.ndarray) -> np.ndarray:
+        quat_wxyz = np.asarray(quat_wxyz, dtype=np.float32)
+        if quat_wxyz.ndim == 1:
+            quat_wxyz = quat_wxyz[None, :]
+        rot = matrix_from_quat(quat_wxyz)
+        return rot[:, :2, :3].reshape(-1)
+
+    def reset(self):
+        super().reset()
+        motion_anchor_quat_w = projected_yaw_quat(self.ref_anchor_quat_w[0])
+        robot_anchor_quat_w = projected_yaw_quat(np.asarray(self.state_processor.root_quat_w, dtype=np.float32))
+        self.anchor_quat_offset = quat_mul(motion_anchor_quat_w, quat_conjugate(robot_anchor_quat_w))
+        self._history_buffer[:] = 0.0
+        self.update({})
+
+    def update(self, data: Dict[str, Any]) -> None:
+        super().update(data)
+        ref_quat = self.ref_anchor_quat_w[0]
+        future_anchor_quat_w = quat_mul(self.anchor_quat_offset, ref_quat)
+
+        robot_quat = np.asarray(self.state_processor.root_quat_w, dtype=np.float32)
+        if robot_quat.shape != (4,):
+            robot_quat = robot_quat.reshape(-1)[:4].astype(np.float32)
+
+        ref_anchor_quat_future_b = quat_mul(quat_conjugate(robot_quat), future_anchor_quat_w)
+        ref_anchor_ori_future_b = self._quat_to_rot6d(ref_anchor_quat_future_b)
+
+        self._history_buffer = np.roll(self._history_buffer, 1, axis=0)
+        self._history_buffer[0] = ref_anchor_ori_future_b[:6]
+
+    def compute(self):
+        out = self._history_buffer[self.history_steps].reshape(-1)
+        # print(f"[obs] ref_anchor_ori_future_b shape={out.shape}")
+        return out

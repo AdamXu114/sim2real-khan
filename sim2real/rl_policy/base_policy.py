@@ -61,6 +61,10 @@ class BasePolicy:
             self.action_manager.joint_names.index(name)
             for name in self.policy_joint_names
         ]
+        self.policy_action_to_sim_indices = [
+            self.policy_joint_names.index(name)
+            for name in self.joint_names_simulation
+        ]
 
         action_scale_cfg = policy_config["action_scale"]
         self.action_scale = np.ones((self.num_actions))
@@ -79,6 +83,7 @@ class BasePolicy:
             self.action_scale[:] = np.array(action_scale_cfg)
         else:
             raise ValueError(f"Invalid action scale type: {type(action_scale_cfg)}")
+        self.action_scale_sim = self.action_scale[self.policy_action_to_sim_indices]
 
         self.init_count = 0
         self.align_count = 0
@@ -168,16 +173,17 @@ class BasePolicy:
 
         def policy(input_dict):
             output_dict = runtime_module(input_dict)
-            action = np.asarray(output_dict["action"], dtype=np.float32)
-            next_state_dict = {
-                k[1]: v
-                for k, v in output_dict.items()
-                if isinstance(k, tuple) and len(k) == 2 and k[0] == "next"
-            }
-            input_dict.update(next_state_dict)
+            action = np.asarray(output_dict["actions"], dtype=np.float32)
+            # next_state_dict = {
+            #     k[1]: v
+            #     for k, v in output_dict.items()
+            #     if isinstance(k, tuple) and len(k) == 2 and k[0] == "next"
+            # }
+            # input_dict.update(next_state_dict)
 
+            action_sim = action[self.policy_action_to_sim_indices]
             q_target = self.default_dof_angles.copy()
-            q_target[self.controlled_joint_indices] += action * self.action_scale
+            q_target[self.controlled_joint_indices] += action_sim * self.action_scale
 
             return action, q_target, input_dict
 
@@ -221,7 +227,7 @@ class BasePolicy:
         obs_dict: Dict[str, np.ndarray] = {}
         for obs_group in self.observations.values():
             obs = obs_group.compute()
-            obs_dict[obs_group.name] = obs.astype(np.float32)
+            obs_dict[obs_group.name] = obs.astype(np.float32)[None, :]
         return obs_dict
 
     def get_align_target(self):
@@ -275,8 +281,38 @@ class BasePolicy:
 
     def set_policy_mode(self, *, source: str) -> None:
         self.reset()
+        # Match deploy/deploy_mujoco_history_jakamini.py startup behavior:
+        # initialize the robot at the motion first frame before policy control.
+        self._reset_robot_to_motion_first_frame()
         self.state_dict["control_mode"] = "policy"
         logger.info(f"Control mode set to policy via {source}")
+
+    def _reset_robot_to_motion_first_frame(self) -> None:
+        if getattr(self.state_processor, "motion_backend", None) != "npz":
+            return
+        try:
+            motion_data = self.state_processor.motion_data
+            motion_joint_names = list(getattr(self.state_processor, "motion_joint_names", []) or [])
+            if motion_data is None or not motion_joint_names:
+                return
+
+            idx_zero = list(self.state_processor.motion_future_steps).index(0)
+            first_joint_pos = np.asarray(motion_data.joint_pos[0, idx_zero], dtype=np.float32)
+            motion_joint_name_to_pos = {
+                name: float(pos)
+                for name, pos in zip(motion_joint_names, first_joint_pos)
+            }
+            aligned_first_joint_pos = self.default_dof_angles.copy()
+            for joint_idx, joint_name in enumerate(self.action_manager.joint_names):
+                if joint_name in motion_joint_name_to_pos:
+                    aligned_first_joint_pos[joint_idx] = motion_joint_name_to_pos[joint_name]
+
+            self.state_processor.joint_pos[:] = aligned_first_joint_pos
+            cmd_dq = np.zeros(self.num_dofs, dtype=np.float32)
+            cmd_tau = np.zeros(self.num_dofs, dtype=np.float32)
+            self.action_manager.send_command(aligned_first_joint_pos, cmd_dq, cmd_tau)
+        except Exception as exc:
+            logger.warning(f"Failed to reset robot joint angles to motion first frame: {exc}")
 
     def process_controllers(self) -> None:
         if self.joystick_controller is not None:

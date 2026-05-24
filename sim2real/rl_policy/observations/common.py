@@ -51,7 +51,7 @@ class root_ang_vel_history(Observation):
         self.root_ang_vel_history[0, :] = self.state_processor.root_ang_vel_b
 
     def compute(self) -> np.ndarray:
-        return self.root_ang_vel_history[self.history_steps].reshape(-1)
+        return self.root_ang_vel_history[self.history_steps].reshape(-1)*0.25
 
 class projected_gravity_history(Observation):
     def __init__(self, history_steps: int, **kwargs):
@@ -83,11 +83,26 @@ class joint_pos_history(Observation):
             self.env,
             joint_names,
         )
-        self.joint_pos_multistep = np.zeros((buffer_size, len(self.joint_ids)))
+
+        policy_joint_order = list(getattr(self.env, "policy_joint_names", self.joint_names))
+        self._reindex_to_policy = np.array(
+            [self.joint_names.index(name) for name in policy_joint_order if name in self.joint_names],
+            dtype=int,
+        )
+        self.joint_names = [self.joint_names[idx] for idx in self._reindex_to_policy]
+
+        self.default_joint_pos = np.asarray(
+            [self.env.default_dof_angles[self.state_processor.joint_names.index(name)] for name in self.joint_names],
+            dtype=np.float32,
+        )
+
+        self.joint_pos_multistep = np.zeros((buffer_size, len(self.joint_names)))
     
     def update(self, data: Dict[str, Any]) -> None:
         self.joint_pos_multistep = np.roll(self.joint_pos_multistep, 1, axis=0)
-        self.joint_pos_multistep[0, :] = self.state_processor.joint_pos[self.joint_ids]
+        joint_pos_sim = self.state_processor.joint_pos[self.joint_ids]
+        joint_pos_policy = joint_pos_sim[self._reindex_to_policy]
+        self.joint_pos_multistep[0, :] = joint_pos_policy - self.default_joint_pos
 
     def compute(self) -> np.ndarray:
         return self.joint_pos_multistep[self.history_steps].reshape(-1)
@@ -102,14 +117,23 @@ class joint_vel_history(Observation):
             self.env,
             joint_names,
         )
-        self.joint_vel_multistep = np.zeros((buffer_size, len(self.joint_ids)))
+
+        policy_joint_order = list(getattr(self.env, "policy_joint_names", self.joint_names))
+        self._reindex_to_policy = np.array(
+            [self.joint_names.index(name) for name in policy_joint_order if name in self.joint_names],
+            dtype=int,
+        )
+        self.joint_names = [self.joint_names[idx] for idx in self._reindex_to_policy]
+
+        self.joint_vel_multistep = np.zeros((buffer_size, len(self.joint_names)))
     
     def update(self, data: Dict[str, Any]) -> None:
         self.joint_vel_multistep = np.roll(self.joint_vel_multistep, 1, axis=0)
-        self.joint_vel_multistep[0, :] = self.state_processor.joint_vel[self.joint_ids]
+        joint_vel_sim = self.state_processor.joint_vel[self.joint_ids]
+        self.joint_vel_multistep[0, :] = joint_vel_sim[self._reindex_to_policy]
 
     def compute(self) -> np.ndarray:
-        return self.joint_vel_multistep[self.history_steps].reshape(-1)
+        return self.joint_vel_multistep[self.history_steps].reshape(-1)*0.05
 
 class prev_actions(Observation):
     def __init__(self, steps: int, **kwargs):

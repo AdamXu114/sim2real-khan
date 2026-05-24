@@ -1,10 +1,12 @@
 from sim2real.config.robots.base import RobotCfg
 from sim2real.config.robots.g1 import G1_CFG
+from sim2real.config.robots.Khan import KHAN_CFG
 from typing import Dict
 
 
 _ROBOT_CFGS: Dict[str, RobotCfg] = {
     G1_CFG.name: G1_CFG,
+    KHAN_CFG.name: KHAN_CFG,
 }
 
 
@@ -17,4 +19,4 @@ def get_robot_cfg(name: str) -> RobotCfg:
         raise ValueError(f"Unknown robot '{name}'. Available robots: {available}") from exc
 
 
-__all__ = ["RobotCfg", "G1_CFG", "get_robot_cfg"]
+__all__ = ["RobotCfg", "G1_CFG", "KHAN_CFG", "get_robot_cfg"]
