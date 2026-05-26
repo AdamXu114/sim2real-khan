@@ -68,7 +68,7 @@ class ActionManager:
 
         self.cmd_q[:] = self.default_joint_pos_unitree
 
-    def send_command(self, cmd_q, cmd_dq, cmd_tau):
+    def send_command(self, cmd_q, cmd_dq, cmd_tau, reset_qpos=None, reset_qvel=None):
         self.cmd_q[:] = cmd_q
         self.cmd_dq[:] = cmd_dq
         self.cmd_tau[:] = cmd_tau
@@ -79,6 +79,8 @@ class ActionManager:
             tau_ff=self.cmd_tau,
             kp=self.joint_kp_unitree,
             kd=self.joint_kd_unitree,
+            reset_qpos=reset_qpos,
+            reset_qvel=reset_qvel,
         )
         # print(self.joint_kp_unitree)
         try:

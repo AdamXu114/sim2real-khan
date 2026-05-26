@@ -1,0 +1,283 @@
+# Policy configuration for Jaka sim2sim migration.
+#
+# This file is structured to mirror the observation / motion semantics used by
+# deploy/deploy_mujoco_history_jakamini.py while fitting the current sim2real
+# policy stack.
+
+joint_names_simulation:
+  - Left_hip_pitch_joint
+  - Left_hip_roll_joint
+  - Left_hip_yaw_joint
+  - Left_knee_joint
+  - Left_ankle_pitch_joint
+  - Left_ankle_roll_joint
+  - Right_hip_pitch_joint
+  - Right_hip_roll_joint
+  - Right_hip_yaw_joint
+  - Right_knee_joint
+  - Right_ankle_pitch_joint
+  - Right_ankle_roll_joint
+  - waist_yaw_joint
+  - Left_shoulder_pitch_joint
+  - Left_shoulder_roll_joint
+  - Left_shoulder_yaw_joint
+  - Left_elbow_joint
+  - Left_wrist_roll_joint
+  - Left_wrist_yaw_joint
+  - Right_shoulder_pitch_joint
+  - Right_shoulder_roll_joint
+  - Right_shoulder_yaw_joint
+  - Right_elbow_joint
+  - Right_wrist_roll_joint
+  - Right_wrist_yaw_joint
+  - Neck_yaw_joint
+  - Neck_pitch_joint
+
+body_names_simulation:
+  - base_link
+  - Left_hip_pitch_Link
+  - Left_hip_roll_Link
+  - Left_hip_yaw_Link
+  - Left_knee_Link
+  - Left_ankle_pitch_Link
+  - Left_ankle_roll_Link
+  - Right_hip_pitch_Link
+  - Right_hip_roll_Link
+  - Right_hip_yaw_Link
+  - Right_knee_Link
+  - Right_ankle_pitch_Link
+  - Right_ankle_roll_Link
+  - waist_yaw_Link
+  - Left_shoulder_pitch_Link
+  - Left_shoulder_roll_Link
+  - Left_shoulder_yaw_Link
+  - Left_elbow_Link
+  - Left_wrist_roll_Link
+  - Left_wrist_yaw_Link
+  - Right_shoulder_pitch_Link
+  - Right_shoulder_roll_Link
+  - Right_shoulder_yaw_Link
+  - Right_elbow_Link
+  - Right_wrist_roll_Link
+  - Right_wrist_yaw__Link
+  - Neck_yaw_Link
+  - Neck_pitch_Link
+
+# Policy outputs 27 actions, one per actuated joint.
+policy_joint_names:
+  - Left_hip_pitch_joint
+  - Right_hip_pitch_joint
+  - waist_yaw_joint
+  - Left_hip_roll_joint
+  - Right_hip_roll_joint
+  - Left_shoulder_pitch_joint
+  - Neck_yaw_joint
+  - Right_shoulder_pitch_joint
+  - Left_hip_yaw_joint
+  - Right_hip_yaw_joint
+  - Left_shoulder_roll_joint
+  - Neck_pitch_joint
+  - Right_shoulder_roll_joint
+  - Left_knee_joint
+  - Right_knee_joint
+  - Left_shoulder_yaw_joint
+  - Right_shoulder_yaw_joint
+  - Left_ankle_pitch_joint
+  - Right_ankle_pitch_joint
+  - Left_elbow_joint
+  - Right_elbow_joint
+  - Left_ankle_roll_joint
+  - Right_ankle_roll_joint
+  - Left_wrist_roll_joint
+  - Right_wrist_roll_joint
+  - Left_wrist_yaw_joint
+  - Right_wrist_yaw_joint
+
+# Default joint positions used by the policy head as bias/offset.
+# These values are derived from deploy/deploy_mujoco_history_jakamini.py::joint_pos_config.
+default_joint_pos:
+  Left_shoulder_roll_joint: -1.57
+  Left_elbow_joint: 1.57
+  Left_wrist_yaw_joint: 0.3
+  Right_shoulder_roll_joint: -1.57
+  Right_elbow_joint: 1.57
+  Right_wrist_yaw_joint: 0.3
+
+# Scalar action scaling (deploy script used a uniform 0.5 scale).
+action_scale: 0.5
+# Matches deploy/deploy_mujoco_history_jakamini.py: np.clip(action, -5, 5)
+action_clip: 5
+
+joint_kp:
+  .*_hip_pitch_joint: 187.0
+  .*_hip_roll_joint: 187.0
+  .*_hip_yaw_joint: 187.0
+  .*_knee_joint: 187.0
+  .*_ankle_pitch_joint: 100.0
+  .*_ankle_roll_joint: 50.0
+  waist_yaw_joint: 187.0
+  .*_shoulder_pitch_joint: 102.0
+  .*_shoulder_roll_joint: 102.0
+  .*_shoulder_yaw_joint: 40.8
+  .*_elbow_joint: 40.8
+  .*_wrist_roll_joint: 6.7
+  .*_wrist_yaw_joint: 6.7
+  Neck_yaw_joint: 6.7
+  Neck_pitch_joint: 6.7
+
+joint_kd:
+  .*_hip_pitch_joint: 18.7
+  .*_hip_roll_joint: 18.7
+  .*_hip_yaw_joint: 18.7
+  .*_knee_joint: 18.7
+  .*_ankle_pitch_joint: 2.0
+  .*_ankle_roll_joint: 0.5
+  waist_yaw_joint: 18.7
+  .*_shoulder_pitch_joint: 10.2
+  .*_shoulder_roll_joint: 10.2
+  .*_shoulder_yaw_joint: 4.0
+  .*_elbow_joint: 4.0
+  .*_wrist_roll_joint: 0.67
+  .*_wrist_yaw_joint: 0.67
+  Neck_yaw_joint: 0.67
+  Neck_pitch_joint: 0.67
+
+motion:
+  motion_backend: raw_npz
+  # Direct path to the deploy-style motion.npz (IsaacLab joint order + BFS body order).
+  motion_path: jaka_data/dance1_subject2/motion.npz
+  future_steps: [0]
+
+  # Joint/body order inside motion.npz (matches deploy/deploy_mujoco_history_jakamini.py).
+  npz_joint_names:
+    - Left_hip_pitch_joint
+    - Right_hip_pitch_joint
+    - waist_yaw_joint
+    - Left_hip_roll_joint
+    - Right_hip_roll_joint
+    - Left_shoulder_pitch_joint
+    - Neck_yaw_joint
+    - Right_shoulder_pitch_joint
+    - Left_hip_yaw_joint
+    - Right_hip_yaw_joint
+    - Left_shoulder_roll_joint
+    - Neck_pitch_joint
+    - Right_shoulder_roll_joint
+    - Left_knee_joint
+    - Right_knee_joint
+    - Left_shoulder_yaw_joint
+    - Right_shoulder_yaw_joint
+    - Left_ankle_pitch_joint
+    - Right_ankle_pitch_joint
+    - Left_elbow_joint
+    - Right_elbow_joint
+    - Left_ankle_roll_joint
+    - Right_ankle_roll_joint
+    - Left_wrist_roll_joint
+    - Right_wrist_roll_joint
+    - Left_wrist_yaw_joint
+    - Right_wrist_yaw_joint
+
+  # BFS body order in the npz file (waist_yaw_Link is index 3, not 13).
+  npz_body_names:
+    - base_link
+    - Left_hip_pitch_Link
+    - Right_hip_pitch_Link
+    - waist_yaw_Link
+    - Left_hip_roll_Link
+    - Right_hip_roll_Link
+    - Left_shoulder_pitch_Link
+    - Right_shoulder_pitch_Link
+    - Neck_yaw_Link
+    - Left_hip_yaw_Link
+    - Right_hip_yaw_Link
+    - Left_shoulder_roll_Link
+    - Right_shoulder_roll_Link
+    - Neck_pitch_Link
+    - Left_knee_Link
+    - Right_knee_Link
+    - Left_shoulder_yaw_Link
+    - Right_shoulder_yaw_Link
+    - Left_ankle_pitch_Link
+    - Right_ankle_pitch_Link
+    - Left_elbow_Link
+    - Right_elbow_Link
+    - Left_ankle_roll_Link
+    - Right_ankle_roll_Link
+    - Left_wrist_roll_Link
+    - Right_wrist_roll_Link
+    - Left_wrist_yaw_Link
+    - Right_wrist_yaw__Link
+
+  # Simulation / MuJoCo tree order (used for align, low-state mapping, etc.).
+  joint_names:
+    - Left_hip_pitch_joint
+    - Left_hip_roll_joint
+    - Left_hip_yaw_joint
+    - Left_knee_joint
+    - Left_ankle_pitch_joint
+    - Left_ankle_roll_joint
+    - Right_hip_pitch_joint
+    - Right_hip_roll_joint
+    - Right_hip_yaw_joint
+    - Right_knee_joint
+    - Right_ankle_pitch_joint
+    - Right_ankle_roll_joint
+    - waist_yaw_joint
+    - Left_shoulder_pitch_joint
+    - Left_shoulder_roll_joint
+    - Left_shoulder_yaw_joint
+    - Left_elbow_joint
+    - Left_wrist_roll_joint
+    - Left_wrist_yaw_joint
+    - Right_shoulder_pitch_joint
+    - Right_shoulder_roll_joint
+    - Right_shoulder_yaw_joint
+    - Right_elbow_joint
+    - Right_wrist_roll_joint
+    - Right_wrist_yaw_joint
+    - Neck_yaw_joint
+    - Neck_pitch_joint
+  body_names:
+    - base_link
+    - Left_hip_pitch_Link
+    - Left_hip_roll_Link
+    - Left_hip_yaw_Link
+    - Left_knee_Link
+    - Left_ankle_pitch_Link
+    - Left_ankle_roll_Link
+    - Right_hip_pitch_Link
+    - Right_hip_roll_Link
+    - Right_hip_yaw_Link
+    - Right_knee_Link
+    - Right_ankle_pitch_Link
+    - Right_ankle_roll_Link
+    - waist_yaw_Link
+    - Left_shoulder_pitch_Link
+    - Left_shoulder_roll_Link
+    - Left_shoulder_yaw_Link
+    - Left_elbow_Link
+    - Left_wrist_roll_Link
+    - Left_wrist_yaw_Link
+    - Right_shoulder_pitch_Link
+    - Right_shoulder_roll_Link
+    - Right_shoulder_yaw_Link
+    - Right_elbow_Link
+    - Right_wrist_roll_Link
+    - Right_wrist_yaw__Link
+    - Neck_yaw_Link
+    - Neck_pitch_Link
+  root_body_name: base_link
+  anchor_body_name: waist_yaw_Link
+
+# Observation spec for the Jaka policy.
+# The `jaka_frame_stack` observation emits a 630-dim vector built from
+# 5 stacked frames of 126 dims each, with feature-major reordering.
+observation:
+  obs:
+    jaka_obs:
+      _target_: jaka_frame_stack
+      anchor_body_index: 3  # waist_yaw_Link in motion.npz_body_names (BFS order)
+      ang_vel_scale: 0.25
+      joint_vel_scale: 0.05
+

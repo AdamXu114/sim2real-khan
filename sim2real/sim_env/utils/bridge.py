@@ -161,6 +161,19 @@ class SimulationBridge:
             self.cmd_kp[:] = low_cmd.kp
             self.cmd_kd[:] = low_cmd.kd
             updated = True
+            # Check for reset request
+            if getattr(low_cmd, "reset_qpos", None) is not None:
+                if low_cmd.reset_qpos.size == self.mj_data.qpos.size:
+                    self.mj_data.qpos[:] = low_cmd.reset_qpos
+                    self.mj_data.qvel[:] = low_cmd.reset_qvel
+                    mujoco.mj_forward(self.mj_model, self.mj_data)
+                    logger.info("Reset simulator state to target pose.")
+                else:
+                    logger.warning(
+                        "Received reset_qpos size {} != mj_data.qpos size {}",
+                        low_cmd.reset_qpos.size,
+                        self.mj_data.qpos.size,
+                    )
 
         if updated:
             self.has_received_command = True

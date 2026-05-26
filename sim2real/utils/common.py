@@ -255,6 +255,8 @@ class LowCmdMessage:
         tau_ff: np.ndarray,
         kp: np.ndarray,
         kd: np.ndarray,
+        reset_qpos: np.ndarray | None = None,
+        reset_qvel: np.ndarray | None = None,
     ):
         arrays = [
             np.asarray(q_target, dtype=np.float32),
@@ -273,23 +275,43 @@ class LowCmdMessage:
         self.tau_ff = arrays[2]
         self.kp = arrays[3]
         self.kd = arrays[4]
+        
+        self.reset_qpos = np.asarray(reset_qpos, dtype=np.float32) if reset_qpos is not None else None
+        self.reset_qvel = np.asarray(reset_qvel, dtype=np.float32) if reset_qvel is not None else None
 
     def to_bytes(self) -> bytes:
         count = self.q_target.size
-        header = struct.pack('<I', count)
+        has_reset = 1 if (self.reset_qpos is not None and self.reset_qvel is not None) else 0
+        header = struct.pack('<II', count, has_reset)
         payload = b''.join(
             arr.astype(np.float32, copy=False).tobytes()
             for arr in (self.q_target, self.dq_target, self.tau_ff, self.kp, self.kd)
         )
+        if has_reset:
+            payload += struct.pack('<II', self.reset_qpos.size, self.reset_qvel.size)
+            payload += self.reset_qpos.astype(np.float32, copy=False).tobytes()
+            payload += self.reset_qvel.astype(np.float32, copy=False).tobytes()
         return header + payload
 
     @classmethod
     def from_bytes(cls, data: bytes) -> 'LowCmdMessage':
-        if len(data) < 4:
+        if len(data) < 8:
+            if len(data) >= 4:
+                (count,) = struct.unpack('<I', data[:4])
+                offset = 4
+                segment_size = count * 4
+                arrays = []
+                for _ in range(5):
+                    end = offset + segment_size
+                    if end > len(data):
+                        raise ValueError("LowCmdMessage data is incomplete")
+                    arrays.append(np.frombuffer(data[offset:end], dtype=np.float32).copy())
+                    offset = end
+                return cls(*arrays)
             raise ValueError("LowCmdMessage data is too short")
 
-        (count,) = struct.unpack('<I', data[:4])
-        offset = 4
+        count, has_reset = struct.unpack('<II', data[:8])
+        offset = 8
         segment_size = count * 4
         arrays = []
         for _ in range(5):
@@ -299,7 +321,25 @@ class LowCmdMessage:
             arrays.append(np.frombuffer(data[offset:end], dtype=np.float32).copy())
             offset = end
 
-        return cls(*arrays)
+        reset_qpos = None
+        reset_qvel = None
+        if has_reset:
+            if offset + 8 > len(data):
+                raise ValueError("LowCmdMessage reset payload header incomplete")
+            qpos_size, qvel_size = struct.unpack('<II', data[offset:offset+8])
+            offset += 8
+            
+            qpos_bytes = qpos_size * 4
+            qvel_bytes = qvel_size * 4
+            if offset + qpos_bytes + qvel_bytes > len(data):
+                raise ValueError("LowCmdMessage reset payload incomplete")
+                
+            reset_qpos = np.frombuffer(data[offset:offset+qpos_bytes], dtype=np.float32).copy()
+            offset += qpos_bytes
+            reset_qvel = np.frombuffer(data[offset:offset+qvel_bytes], dtype=np.float32).copy()
+            offset += qvel_bytes
+
+        return cls(*arrays, reset_qpos=reset_qpos, reset_qvel=reset_qvel)
 
 
 class LowStateMessage:

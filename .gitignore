@@ -1,4 +1,4 @@
-checkpoints
+# checkpoints
 .vscode
 stubs
 /legacy
@@ -41,4 +41,3 @@ share/python-wheels/
 *.egg
 MANIFEST
 
-deploy/

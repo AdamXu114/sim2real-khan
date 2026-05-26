@@ -41,6 +41,12 @@ def _squeeze_leading_batch_dim(value: np.ndarray, expected_shape: Tuple[int, ...
         squeezed = np.squeeze(array, axis=0)
         if tuple(squeezed.shape) == expected_shape:
             return squeezed
+    # Handle case where expected_shape has a leading batch dim of 1
+    # but the input is missing it (e.g., input=(630,), expected=(1, 630))
+    if len(expected_shape) == array.ndim + 1 and expected_shape[0] == 1:
+        unsqueezed = np.expand_dims(array, axis=0)
+        if tuple(unsqueezed.shape) == expected_shape:
+            return unsqueezed
     raise ValueError(f"Expected input shape {expected_shape}, got {array.shape}")
 
 

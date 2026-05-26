@@ -1,0 +1,4 @@
+<mujoco>
+    <compiler fusestatic="false"/>
+    <include file="Khan_mini.urdf"/>
+</mujoco>

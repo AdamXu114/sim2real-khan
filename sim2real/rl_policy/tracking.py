@@ -23,7 +23,8 @@ def _apply_runtime_motion_config(
 ):
     policy_config = deepcopy(policy_config)
     motion_cfg = policy_config.setdefault("motion", {})
-    motion_cfg["motion_backend"] = motion_backend
+    if motion_backend is not None:
+        motion_cfg["motion_backend"] = motion_backend
     if max_future is not None and "future_steps" in motion_cfg:
         max_future = int(max_future)
         original_future_steps = [int(step) for step in motion_cfg["future_steps"]]
@@ -65,6 +66,9 @@ class Tracking(BasePolicy):
                 "Using runtime motion_backend=zmq "
                 f"connect={self.args.motion_zmq_connect}"
             )
+        effective_backend = policy_config.get("motion", {}).get("motion_backend", self.args.motion_backend)
+        if effective_backend:
+            logger.info("Motion backend: {}", effective_backend)
         return policy_config
 
     def toggle_paused(self, *, source: str) -> None:
@@ -89,7 +93,7 @@ class Tracking(BasePolicy):
 class TrackingArgs(BasePolicyArgs):
     """Robot."""
 
-    motion_backend: Literal["npz", "zmq"] = "npz"
+    motion_backend: Optional[Literal["npz", "zmq", "raw_npz"]] = None
     max_future: Optional[int] = None
     motion_zmq_connect: str = "tcp://127.0.0.1:28701"
     motion_zmq_hwm: int = 1

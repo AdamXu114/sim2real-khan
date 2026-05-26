@@ -149,8 +149,8 @@ class Args:
     """Robot."""
 
     robot: str = "g1"
-    sim_dt: float = 0.005
-    decimation: int = 4
+    sim_dt: float = 0.002
+    decimation: int = 10
     enable_elastic_band: bool = True
 
 

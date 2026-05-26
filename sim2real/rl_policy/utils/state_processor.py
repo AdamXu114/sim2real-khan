@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 from sim2real.config.robots.base import RobotCfg
 from sim2real.rl_policy.utils.motion import MotionDataset, MotionData, motion_dataset_first_motion
 from sim2real.rl_policy.utils.motion_buffer import RealtimeMotionBuffer
+from sim2real.rl_policy.utils.npz_motion import NpzMotionDataset
 from sim2real.utils.common import ZMQSubscriber, PORTS, LowStateMessage
 
 class StateProcessor:
@@ -60,16 +61,16 @@ class StateProcessor:
     
     def reset(self):
         # Reset motion playback to the first frame (standing pose)
-        if self.motion_backend == "npz":
+        if self.motion_backend in ("npz", "raw_npz"):
             self.motion_t[:] = 0
         self._update_motion_data()
 
     def update(self, data: Optional[Dict] = None):
         data = data or {}
         paused = data.get("paused", False)
-        if not paused and self.motion_backend == "npz":
+        if not paused and self.motion_backend in ("npz", "raw_npz"):
             self.motion_t += 1
-            if self.motion_backend == "npz" and self.motion_dataset is not None and self.motion_length > 0:
+            if self.motion_length > 0:
                 if self.motion_t[0] >= self.motion_length:
                     self.motion_t[:] = 0
                     data["paused"] = True
@@ -104,6 +105,33 @@ class StateProcessor:
 
             self.motion_joint_names = list(self.motion_dataset.joint_names)
             self.motion_body_names = list(self.motion_dataset.body_names)
+        elif motion_backend == "raw_npz":
+            motion_path = self.motion_config.get("motion_path")
+            if motion_path is None:
+                raise ValueError("motion_path is required for raw_npz motion backend")
+            npz_joint_names = self.motion_config.get("npz_joint_names")
+            npz_body_names = self.motion_config.get("npz_body_names")
+            if npz_joint_names is None or npz_body_names is None:
+                raise ValueError(
+                    "motion.npz_joint_names and motion.npz_body_names are required for raw_npz backend"
+                )
+
+            import sim2real
+            from pathlib import Path
+            base_dir = Path(sim2real.__file__).parent.parent
+            resolved_path = (base_dir / motion_path).resolve()
+
+            self.npz_dataset = NpzMotionDataset(
+                str(resolved_path),
+                joint_names=npz_joint_names,
+                body_names=npz_body_names,
+            )
+            self.motion_ids = np.array([0], dtype=int)
+            self.motion_t = np.array([0], dtype=int)
+            self.motion_length = self.npz_dataset.num_steps
+
+            self.motion_joint_names = list(self.npz_dataset.joint_names)
+            self.motion_body_names = list(self.npz_dataset.body_names)
         elif self.motion_backend == "zmq":
             self.motion_buffer = RealtimeMotionBuffer(
                 robot_cfg=self.robot_cfg,
@@ -122,6 +150,12 @@ class StateProcessor:
     def _update_motion_data(self):
         if self.motion_backend == "npz":
             self.motion_data = self.motion_dataset.get_slice(
+                self.motion_ids,
+                self.motion_t,
+                self.motion_future_steps,
+            )
+        elif self.motion_backend == "raw_npz":
+            self.motion_data = self.npz_dataset.get_slice(
                 self.motion_ids,
                 self.motion_t,
                 self.motion_future_steps,
