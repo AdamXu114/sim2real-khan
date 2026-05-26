@@ -28,32 +28,14 @@ from typing import Any, Dict, List
 import numpy as np
 
 from .base import Observation
+from sim2real.utils.math import (
+    quat_conjugate,
+    quat_mul,
+    quat_rotate_inverse_numpy,
+)
 
 
-# ──────────────────────── Quaternion helpers ─────────────────────────────── #
-
-def _quat_to_rot6d(q: np.ndarray) -> np.ndarray:
-    r, i, j, k = q[0], q[1], q[2], q[3]
-    two_s = 2.0 / (r * r + i * i + j * j + k * k)
-    ii = i * i; jj = j * j; kk = k * k
-    ij = i * j; kr = k * r; ik = i * k
-    jr = j * r; jk = j * k; ir = i * r
-    return np.array([
-        1 - two_s * (jj + kk),
-        two_s * (ij - kr),
-        two_s * (ij + kr),
-        1 - two_s * (ii + kk),
-        two_s * (ik - jr),
-        two_s * (jk + ir),
-    ], dtype=np.float32)
-
-
-def _quat_apply_inverse(quat: np.ndarray, vec: np.ndarray) -> np.ndarray:
-    xyz = quat[1:]
-    w = quat[0]
-    t = np.cross(xyz, vec) * 2
-    return vec - w * t + np.cross(xyz, t)
-
+# ──────────────────── Single-quaternion helpers (reset only) ────────────── #
 
 def _quat_mul_single(q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
     w1, x1, y1, z1 = q1
@@ -75,12 +57,6 @@ def _yaw_quat_single(q: np.ndarray) -> np.ndarray:
     w, x, y, z = q
     yaw = np.arctan2(2 * (w * z + x * y), 1 - 2 * (y ** 2 + z ** 2))
     return np.array([np.cos(yaw / 2), 0, 0, np.sin(yaw / 2)])
-
-
-def _subtract_frame_transforms_q(q01: np.ndarray, q02: np.ndarray) -> np.ndarray:
-    """Compute relative quaternion: q01^-1 * q02."""
-    q10 = _quat_inv_single(q01)
-    return _quat_mul_single(q10, q02)
 
 
 # ─────────────────────────── Observation class ──────────────────────────── #
@@ -216,7 +192,7 @@ class jaka_frame_stack_mf(Observation):
     # ── Command (155-dim) ──────────────────────────────────────────────── #
 
     def _compute_command(self) -> np.ndarray:
-        """Build 155-dim command from 5 future motion steps.
+        """Build 155-dim command from 5 future motion steps (batched).
 
         Structure: root_pos_diff_b (5×3) + root_z_mf (5×1) + ref_joint_pos (5×27)
         Neck yaw/pitch and wrist yaw joints are zeroed in the reference.
@@ -226,38 +202,36 @@ class jaka_frame_stack_mf(Observation):
             return np.zeros(self._COMMAND_DIM, dtype=np.float32)
 
         anchor_idx = self.anchor_body_index
-        ref_anchor_pos_cur = motion_data.body_pos_w[0, 0, anchor_idx]
-        ref_anchor_quat_cur = motion_data.body_quat_w[0, 0, anchor_idx]
 
-        root_pos_diff_b = []
-        root_z_mf = []
-        motion_joint_pos = []
+        # All future anchor positions [NUM_FUTURE_STEPS, 3]
+        ref_pos_all = motion_data.body_pos_w[0, :, anchor_idx]
 
-        for i in range(self._NUM_FUTURE_STEPS):
-            ref_pos = motion_data.body_pos_w[0, i, anchor_idx]
-            diff_w = ref_pos - ref_anchor_pos_cur
-            diff_b = _quat_apply_inverse(ref_anchor_quat_cur, diff_w)
-            root_pos_diff_b.append(diff_b)
+        # Position diff from current frame, expressed in current anchor frame
+        ref_anchor_quat_cur = motion_data.body_quat_w[0, 0, anchor_idx]  # [4]
+        ref_anchor_quat_batch = np.tile(
+            ref_anchor_quat_cur[None, :], (self._NUM_FUTURE_STEPS, 1)
+        )
+        diff_b = quat_rotate_inverse_numpy(
+            ref_anchor_quat_batch, ref_pos_all - ref_pos_all[0:1]
+        )
 
-            root_z_mf.append(ref_pos[2:3])
+        root_pos_diff_b = diff_b.reshape(-1)              # 15
+        root_z_mf = ref_pos_all[:, 2:3].reshape(-1)       # 5
 
-            joint_pos_step = motion_data.joint_pos[0, i].copy()
-            # Zero out neck and wrist yaw joints (IsaacLab indices 6, 11, 25, 26)
-            joint_pos_step[6] = 0
-            joint_pos_step[11] = 0
-            joint_pos_step[-2:] = 0
-            motion_joint_pos.append(joint_pos_step)
+        # Joint positions with neck/wrist yaw zeroed (batched)
+        motion_joint_pos = motion_data.joint_pos[0, :, :].copy()  # [5, 27]
+        motion_joint_pos[:, [6, 11]] = 0
+        motion_joint_pos[:, -2:] = 0
+        motion_joint_pos_flat = motion_joint_pos.reshape(-1)      # 135
 
         return np.concatenate([
-            np.concatenate(root_pos_diff_b, axis=0),
-            np.concatenate(root_z_mf, axis=0),
-            np.concatenate(motion_joint_pos, axis=0),
+            root_pos_diff_b, root_z_mf, motion_joint_pos_flat,
         ], axis=0).astype(np.float32)
 
     # ── Anchor orientation (30-dim) ────────────────────────────────────── #
 
     def _compute_anchor_ori(self) -> np.ndarray:
-        """Build 30-dim anchor orientation from 5 future motion steps (rot6d × 5)."""
+        """Build 30-dim anchor orientation from 5 future motion steps (batched, rot6d × 5)."""
         motion_data = self.state_processor.motion_data
         if motion_data is None:
             return np.zeros(self._ANCHOR_ORI_DIM, dtype=np.float32)
@@ -270,14 +244,41 @@ class jaka_frame_stack_mf(Observation):
         robot_anchor_quat = _quat_mul_single(robot_quat, rz)
 
         anchor_idx = self.anchor_body_index
-        ori_b_flat = []
-        for i in range(self._NUM_FUTURE_STEPS):
-            ref_quat = motion_data.body_quat_w[0, i, anchor_idx]
-            future_anchor_quat_w = _quat_mul_single(self.ref_to_robot_quat_init, ref_quat)
-            ori_b = _subtract_frame_transforms_q(robot_anchor_quat, future_anchor_quat_w)
-            ori_b_flat.append(_quat_to_rot6d(ori_b))
 
-        return np.concatenate(ori_b_flat, axis=0).astype(np.float32)
+        # All future reference anchor quats [NUM_FUTURE_STEPS, 4]
+        ref_quat_all = motion_data.body_quat_w[0, :, anchor_idx]
+
+        # future_anchor_quat_w = ref_to_robot_quat_init * ref_quat_all
+        ref_to_robot_init_batch = np.tile(
+            self.ref_to_robot_quat_init[None, :], (self._NUM_FUTURE_STEPS, 1)
+        )
+        future_anchor_quat_w = quat_mul(ref_to_robot_init_batch, ref_quat_all)  # [5, 4]
+
+        # ori_b = robot_anchor_quat^-1 * future_anchor_quat_w
+        robot_anchor_quat_batch = np.tile(
+            robot_anchor_quat[None, :], (self._NUM_FUTURE_STEPS, 1)
+        )
+        ori_b = quat_mul(
+            quat_conjugate(robot_anchor_quat_batch), future_anchor_quat_w
+        )  # [5, 4]
+
+        # Batched rot6d, same element order as _quat_to_rot6d:
+        #   [r00, r01, r10, r11, r02, r12]
+        r, i, j, k = ori_b[:, 0], ori_b[:, 1], ori_b[:, 2], ori_b[:, 3]
+        two_s = 2.0 / (r * r + i * i + j * j + k * k)
+        ii = i * i; jj = j * j; kk = k * k
+        ij = i * j; kr = k * r; ik = i * k
+        jr = j * r; jk = j * k; ir = i * r
+        rot6d = np.stack([
+            1.0 - two_s * (jj + kk),
+            two_s * (ij - kr),
+            two_s * (ij + kr),
+            1.0 - two_s * (ii + kk),
+            two_s * (ik - jr),
+            two_s * (jk + ir),
+        ], axis=-1).reshape(-1)  # [5, 6] → 30
+
+        return rot6d.astype(np.float32)
 
     # ── Full observation ───────────────────────────────────────────────── #
 
